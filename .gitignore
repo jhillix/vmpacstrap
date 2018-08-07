@@ -1,0 +1,11 @@
+*.img
+*.log
+*.tar.gz
+*.pyc
+*.egg-info
+doc/_build/
+man/_build/
+dist/*
+local/*
+yarns/*.html
+yarns/*.pdf

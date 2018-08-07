@@ -1,0 +1,205 @@
+# Fast option check tests
+
+This chapter contains fast scenarios that test vmpacstrap option
+handling. These scenarios do not actually build images, they only
+verify that vmpacstrap parses the command line correctly.
+
+    SCENARIO --squash and --image used together
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --squash=FOO --image=BAR --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching --squash
+    AND vmpacstrap wrote an error message matching --image
+
+    SCENARIO --squash and --arch arm64 used together
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --squash=FOO --arch=arm64 --dry-run
+    THEN vmpacstrap exited with a zero exit code
+
+    SCENARIO --use-uefi and --arch arm64 used together
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --grub --use-uefi --arch=arm64 --dry-run
+    THEN vmpacstrap exited with a zero exit code
+
+    SCENARIO --arch arm64 used with --image but without --use-uefi
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --foreign=PATH --arch=arm64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching UEFI
+    AND vmpacstrap wrote an error message matching arm64
+
+    SCENARIO --use-uefi and --arch arm64 used without grub
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --use-uefi --arch=arm64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching UEFI
+    AND vmpacstrap wrote an error message matching Grub
+
+    SCENARIO --use-uefi and --arch arm64 used without image
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --grub --use-uefi --arch=arm64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching disk image filename
+    AND vmpacstrap wrote an error message matching squash
+
+    SCENARIO --size too small for a bootstrap
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --size=100M --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching too small
+    AND vmpacstrap wrote an error message matching bootstrap
+
+    SCENARIO Arch distribution stable name check
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --distribution=stable --dry-run
+    THEN vmpacstrap exited with a zero exit code
+
+    SCENARIO Arch distribution jessie name check
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --distribution=jessie --dry-run
+    THEN vmpacstrap exited with a zero exit code
+
+    SCENARIO allow use of arch and foreign options
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --arch=armhf --foreign=PATH --dry-run
+    THEN vmpacstrap exited with a zero exit code
+
+    SCENARIO disallow use of uefi on unsupported architectures
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --grub --use-uefi --arch=armel --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching armel
+    AND vmpacstrap wrote an error message matching not a supported
+    AND vmpacstrap wrote an error message matching UEFI
+
+    SCENARIO disallow use of bootpartition if ESP already set
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --bootoffset=1024 --grub --use-uefi --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching separate boot
+    AND vmpacstrap wrote an error message matching not supported
+    AND vmpacstrap wrote an error message matching UEFI
+
+    SCENARIO disallow UEFI support on wheezy except on amd64
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --grub --use-uefi --roottype=ext2 --distribution=wheezy --arch=arm64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching Only amd64
+    AND vmpacstrap wrote an error message matching supports UEFI
+    AND vmpacstrap wrote an error message matching Wheezy
+
+    SCENARIO disallow apt-mirror without configure-apt
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --apt-mirror=mirror
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching requires --configure-apt as well
+
+    SCENARIO default includes the kernel package
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --arch=amd64  --dry-run
+    THEN vmpacstrap exited with a zero exit code
+    AND vmpacstrap wrote a message matching linux-image-amd64
+
+    SCENARIO no-linux omits the kernel package
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --no-kernel --image=FOO --arch=amd64  --dry-run
+    THEN vmpacstrap exited with a zero exit code
+    AND vmpacstrap wrote a message not matching linux-image-amd64
+
+    SCENARIO kernel-package includes the kernel package
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --kernel-package unlikely --image=FOO --arch=amd64  --dry-run
+    THEN vmpacstrap exited with a zero exit code
+    AND vmpacstrap wrote a message not matching linux-image-amd64
+    AND vmpacstrap wrote a message matching unlikely
+
+    SCENARIO no-kernel overrides kernel-package
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --no-kernel --kernel-package unlikely --image=FOO --arch=amd64  --dry-run
+    THEN vmpacstrap exited with a zero exit code
+    AND vmpacstrap wrote a message not matching linux-image-amd64
+    AND vmpacstrap wrote a message not matching unlikely
+
+    SCENARIO package includes the specified package
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --package unlikely --image=FOO --arch=amd64  --dry-run
+    THEN vmpacstrap exited with a zero exit code
+    AND vmpacstrap wrote a message matching linux-image-amd64
+    AND vmpacstrap wrote a message matching unlikely
+
+    SCENARIO only images can be converted to qcow2
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --convert-qcow2 --tarball --arch=amd64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching qcow2 can only
+    AND vmpacstrap wrote an error message matching with --image
+
+    SCENARIO tarball is not usable with image
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --tarball=FOO --arch=amd64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching not both
+
+    SCENARIO tarball is not usable with squash
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --squash=FOO --tarball=FOO --arch=amd64 --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching not both
+
+    SCENARIO masking systemd-networkd without updating initramfs
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --no-systemd-networkd --no-update-initramfs --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching requires updating the
+
+    SCENARIO btrfs not yet supported with extlinux
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --roottype btrfs --extlinux --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching not yet supported
+
+    SCENARIO btrfs not yet supported without disabling extlinux
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --roottype btrfs --dry-run
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching not yet supported
+
+    SCENARIO bootflag requires argument
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --bootflag
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching bootflag
+    AND vmpacstrap wrote an error message matching requires an argument
+
+    SCENARIO wheezy image does not support ext4
+    ASSUMING fast tests are requested
+    WHEN user attempts to run vmpacstrap
+    ... --image=FOO --roottype ext4 --dry-run --distribution wheezy
+    THEN vmpacstrap exited with a non-zero exit code
+    AND vmpacstrap wrote an error message matching Wheezy images using ext4 will not be able to boot

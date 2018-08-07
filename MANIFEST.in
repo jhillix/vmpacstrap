@@ -1,0 +1,10 @@
+include NEWS
+include vmextract.py
+include vmsquash-tar.py
+include vmpacstrap.8.in
+recursive-include examples *.sh *.txt *.py
+include common/*
+include doc/*
+include man/*
+recursive-include yarns *.yarn Makefile run-tests yarns.css shell.lib
+include bin/qemu-wrapper.sh
