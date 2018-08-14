@@ -21,7 +21,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import datetime
-from distro_info import ArchDistroInfo, UbuntuDistroInfo
+from distro_info import DebianDistroInfo, UbuntuDistroInfo
 from vmpacstrap.base import Base
 
 # pylint: disable=missing-docstring
@@ -33,7 +33,7 @@ class Codenames(Base):
 
     def __init__(self):
         super(Codenames, self).__init__()
-        self.debian_info = ArchDistroInfo()
+        self.debian_info = DebianDistroInfo()
         self.ubuntu_info = UbuntuDistroInfo()
         self.settings = None
 

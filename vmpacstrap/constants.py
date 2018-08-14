@@ -25,11 +25,11 @@ arch_table = {  # pylint: disable=invalid-name
     'amd64': {
         'removable': '/EFI/boot/bootx64.efi',  # destination location
         'install': '/EFI/debian/grubx64.efi',  # package location
-        'package': 'grub-efi-amd64',  # bootstrap package
-        'bin_package': 'grub-efi-amd64-bin',  # binary only
-        'extra': 'i386',  # architecture to add binary package
-        'exclusive': False,  # only EFI supported for this arch.
-        'target': 'x86_64-efi',  # grub target name
+        'package': 'grub-efi-amd64',           # bootstrap package
+        'bin_package': 'grub-efi-amd64-bin',   # binary only
+        'extra': 'i386',                       # architecture to add binary package
+        'exclusive': False,                    # only EFI supported for this arch.
+        'target': 'x86_64-efi',                # grub target name
     },
     'i386': {
         'removable': '/EFI/boot/bootia32.efi',

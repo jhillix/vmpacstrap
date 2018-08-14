@@ -9,4 +9,4 @@ dist/*
 local/*
 yarns/*.html
 yarns/*.pdf
-.idea
+.idea/*

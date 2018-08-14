@@ -60,7 +60,7 @@ In order to use vmpacstrap, you'll need a few things:
 * mbr
 * kpartx
 * python-cliapp (see http://liw.fi/cliapp/)
-* python-distro-info
+* python jinja2
 
 Testing vmpacstrap from git
 ------------------------------

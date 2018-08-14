@@ -28,8 +28,14 @@ import cliapp
 from vmpacstrap.base import (
     Base,
     runcmd,
-    copy_files
+    copy_files,
+    mount_wrapper,
+    umount_wrapper
 )
+from jinja2 import Environment, FileSystemLoader
+
+
+import sys
 
 # pylint: disable=missing-docstring
 
@@ -49,6 +55,7 @@ class Filesystem(Base):
             'roottype': None,
             'swapdev': None,
         }
+        self.env = Environment(loader=FileSystemLoader("templates/"))
 
     def define_settings(self, settings):
         self.settings = settings
@@ -140,43 +147,51 @@ class Filesystem(Base):
         else:
             runcmd(['mkfs', '-t', fstype, device])
 
-    def create_fstab(self):
+    def gen_fstab(self):
         rootdir = self.devices['rootdir']
-        rootdev = self.devices['rootdev']
-        bootdev = self.devices['bootdev']
-        boottype = self.devices['boottype']
-        roottype = self.devices['roottype']
-
-        def fsuuid(device):
-            out = runcmd(['blkid', '-c', '/dev/null', '-o', 'value',
-                          '-s', 'UUID', device])
-            return out.splitlines()[0].strip()
-
-        if rootdev:
-            rootdevstr = 'UUID=%s' % fsuuid(rootdev)
-        else:
-            rootdevstr = '/dev/sda1'
-
-        if bootdev and not self.settings['use-uefi']:
-            bootdevstr = 'UUID=%s' % fsuuid(bootdev)
-        else:
-            bootdevstr = None
-
         if not rootdir:
             raise cliapp.AppException("rootdir not set")
+        # https://bbs.archlinux.org/viewtopic.php?id=220215 and
+        # https://stackoverflow.com/questions/36379789/python-subprocess-unable-to-escape-quotes
+        runcmd("bash -c 'genfstab -U %s >> %s/etc/fstab'" % (rootdir, rootdir), shell=True)
 
-        fstab = os.path.join(str(rootdir), 'etc', 'fstab')
-        with open(fstab, 'w') as fstab:
-            fstab.write('proc /proc proc defaults 0 0\n')
-            fstab.write('%s / %s %s 0 1\n' %
-                        (rootdevstr, roottype, self.get_mount_flags(roottype)))
-            if bootdevstr:
-                fstab.write('%s /boot %s %s 0 2\n' %
-                            (bootdevstr, boottype, self.get_mount_flags(boottype)))
-                if self.settings['swap'] > 0:
-                    fstab.write("/dev/sda3 swap swap defaults 0 0\n")
-            elif self.settings['swap'] > 0:
-                fstab.write("/dev/sda2 swap swap defaults 0 0\n")
+        # TODO: Not needed??
+        # rootdir = self.devices['rootdir']
+        # rootdev = self.devices['rootdev']
+        # bootdev = self.devices['bootdev']
+        # boottype = self.devices['boottype']
+        # roottype = self.devices['roottype']
+        #
+        # def fsuuid(device):
+        #     out = runcmd(['blkid', '-c', '/dev/null', '-o', 'value',
+        #                   '-s', 'UUID', device])
+        #     return out.splitlines()[0].strip()
+        #
+        # if rootdev:
+        #     rootdevstr = 'UUID=%s' % fsuuid(rootdev)
+        # else:
+        #     rootdevstr = '/dev/sda1'
+        #
+        # if bootdev and not self.settings['use-uefi']:
+        #     bootdevstr = 'UUID=%s' % fsuuid(bootdev)
+        # else:
+        #     bootdevstr = None
+        #
+        # if not rootdir:
+        #     raise cliapp.AppException("rootdir not set")
+        #
+        # fstab = os.path.join(str(rootdir), 'etc', 'fstab')
+        # with open(fstab, 'w') as fstab:
+        #     fstab.write('proc /proc proc defaults 0 0\n')
+        #     fstab.write('%s / %s %s 0 1\n' %
+        #                 (rootdevstr, roottype, self.get_mount_flags(roottype)))
+        #     if bootdevstr:
+        #         fstab.write('%s /boot %s %s 0 2\n' %
+        #                     (bootdevstr, boottype, self.get_mount_flags(boottype)))
+        #         if self.settings['swap'] > 0:
+        #             fstab.write("/dev/sda3 swap swap defaults 0 0\n")
+        #     elif self.settings['swap'] > 0:
+        #         fstab.write("/dev/sda2 swap swap defaults 0 0\n")
 
     @staticmethod
     def get_mount_flags(fstype):
@@ -229,40 +244,84 @@ class Filesystem(Base):
         self.message("Copying boot files out of squashfs")
         copy_files(bootdir, self.settings['squash'])
 
-    def configure_apt(self):
+    def configure_pacman(self):
         rootdir = self.devices['rootdir']
-        if not self.settings['configure-apt'] or not self.settings['apt-mirror']:
-            return
+        arch = self.settings['arch']
         if not rootdir:
             raise cliapp.AppException("rootdir not set")
-        # use the distribution and mirror to create an apt source
-        self.message("Configuring apt to use distribution and mirror")
-        conf = os.path.join(str(rootdir), 'etc', 'apt', 'sources.list.d', 'base.list')
-        logging.debug('configure apt %s', conf)
+        # This pacman.conf file is from Arch Linux ARM:
+        # https://github.com/archlinuxarm/PKGBUILDs/blob/master/core/pacman/pacman.conf
+        pacman_conf_template = self.env.get_template("pacman.conf.j2")
+        rootdir_pacman_conf = os.path.join(str(rootdir), 'pacman.conf')
+        pacman_conf_template.stream(
+            settings_arch=arch,
+            devices_rootdir=rootdir
+        ).dump(
+            rootdir_pacman_conf
+        )
         mirror = self.settings['mirror']
-        if self.settings['apt-mirror']:
-            mirror = self.settings['apt-mirror']
-            self.message("Setting apt mirror to %s" % mirror)
-        os.unlink(os.path.join(str(rootdir), 'etc', 'apt', 'sources.list'))
-        source = open(conf, 'w')
-        line = 'deb %s %s main\n' % (mirror, self.settings['distribution'])
-        source.write(line)
-        line = '#deb-src %s %s main\n' % (mirror, self.settings['distribution'])
-        source.write(line)
-        source.close()
-        # ensure the apt sources have valid lists
-        runcmd(['chroot', rootdir, 'apt-get', '-qq', 'update'])
+        mirrorlist_template = self.env.get_template("mirrorlist.j2")
+        # Construct the path with file
+        rootdir_etc_pacman_d_mirrorlist = os.path.join(str(rootdir), 'etc', 'pacman.d', 'mirrorlist')
+        # Create the path tree
+        os.makedirs(os.path.dirname(rootdir_etc_pacman_d_mirrorlist), exist_ok=True)
+        mirrorlist_template.stream(
+            settings_mirror=mirror
+        ).dump(
+            rootdir_etc_pacman_d_mirrorlist
+        )
 
     def list_installed_pkgs(self):
         if not self.settings['pkglist']:
             return
         rootdir = self.devices['rootdir']
         # output the list of installed packages for sources identification
-        self.message("Creating a list of installed binary package names")
-        out = runcmd(['chroot', rootdir,
-                      'dpkg-query', '-W', "-f='${Package}.deb\n'"])
-        with open('dpkg.list', 'w') as dpkg:
-            dpkg.write(out)
+        self.message("Creating a list of installed binary package names:")
+        args = ['chroot', rootdir, 'pacman', '-Qqe']
+        if self.is_arm():
+            out = self.arm_chroot(rootdir, args)
+            self.message(out.decode("utf-8"))
+        else:
+            out = runcmd(args)
+            with open('pkg.list', 'w') as pkg:
+                pkg.write(out)
+
+    def upgrade_rootfs(self, rootdir):
+        self.message("Updating resolv.conf")
+        etc_resolv_conf_template = self.env.get_template("resolv.conf.j2")
+        etc_resolf_conf = os.path.join(str(rootdir), 'etc', 'resolv.conf')
+        etc_resolv_conf_template.stream(
+            settings_nameserver="8.8.8.8"
+        ).dump(
+            etc_resolf_conf
+        )
+        self.message("Upgrading rootfs mounted at %s" % rootdir)
+        # Perform pacman upggrade
+        args = ['chroot', rootdir, 'pacman', '-Syu', '--noconfirm']
+        if self.is_arm():
+            self.arm_chroot(rootdir, args)
+            # Re-install _e_v_e_r_y_t_h_i_n_g_ to fix any installs that didn't run - mainly triggers when pacstrap was
+            # invoked
+            args = "chroot %s /bin/bash -c 'pacman -Qnq | pacman -S --noconfirm -'" % rootdir
+            self.message("Performing extra step for ARM based rootfs")
+            self.arm_chroot(rootdir, args, shell=True)
+        else:
+            runcmd(args)
+        self.message("Updating resolv.conf")
+        etc_resolv_conf_template = self.env.get_template("resolv.conf.j2")
+        etc_resolv_conf = os.path.join(str(rootdir), 'etc', 'resolv.conf')
+        etc_resolv_conf_template.stream(
+            settings_nameserver="<enter DNS IP>"
+        ).dump(
+            etc_resolv_conf
+        )
+
+    def remove_pacman_conf(self, rootdir):
+        pacman_conf = self.settings['conf']
+        pacman_conf_rootdir = os.path.join(rootdir, pacman_conf)
+        if os.path.exists(pacman_conf_rootdir):
+            self.message("Removing %s from %s" % (pacman_conf, rootdir))
+            os.remove(pacman_conf_rootdir)
 
     def remove_udev_persistent_rules(self):
         rootdir = self.devices['rootdir']
@@ -279,23 +338,58 @@ class Filesystem(Base):
 
     def set_hostname(self):
         rootdir = self.devices['rootdir']
-        hostname = self.settings['hostname']
         if not rootdir:
             raise cliapp.AppException("rootdir not set")
+        hostname = self.settings['hostname']
+        etc_hosts_template = self.env.get_template("hosts.j2")
+        etc_hosts = os.path.join(str(rootdir), 'etc', 'hosts')
+        etc_hosts_template.stream(
+            settings_hostname=hostname
+        ).dump(
+            etc_hosts
+        )
         with open(os.path.join(str(rootdir), 'etc', 'hostname'), 'w') as fhost:
             fhost.write('%s\n' % hostname)
 
-        etc_hosts = os.path.join(str(rootdir), 'etc', 'hosts')
-        try:
-            with open(etc_hosts, 'r') as fhost:
-                data = fhost.read()
-            with open(etc_hosts, 'w') as fhosts:
-                for line in data.splitlines():
-                    if line.startswith('127.0.0.1'):
-                        line += ' %s' % hostname
-                    fhosts.write('%s\n' % line)
-        except IOError:
-            pass
+    def set_time_zone(self):
+        rootdir = self.devices['rootdir']
+        region = self.settings['region']
+        city = self.settings['city']
+        if not rootdir:
+            raise cliapp.AppException("rootdir not set")
+        args = "chroot %s ln -sf /usr/share/zoneinfo/%s/%s /etc/localtime" % (rootdir, region, city)
+        if self.is_arm():
+            self.arm_chroot(rootdir, args, shell=True)
+        else:
+            runcmd(args, shell=True)
+
+        # Generate /etc/adjtime
+        # TODO: This might not be possible - investigate
+        # runcmd(['chroot', rootdir, 'hwclock', '--systohc'])
+
+    def set_localization(self):
+        rootdir = self.devices['rootdir']
+        locale = self.settings['locale']
+        lang = self.settings['lang']
+        locale_gen_template = self.env.get_template("locale.gen.j2")
+        etc_locale_gen = os.path.join(str(rootdir), 'etc', 'locale.gen')
+        locale_gen_template.stream(
+            settings_locale=locale
+        ).dump(
+            etc_locale_gen
+        )
+        args = ['chroot', rootdir, 'locale-gen']
+        if self.is_arm():
+            self.arm_chroot(rootdir, args)
+        else:
+            runcmd(args)
+        locale_conf_template = self.env.get_template("locale.conf.j2")
+        etc_locale_conf = os.path.join(str(rootdir), 'etc', 'locale.conf')
+        locale_conf_template.stream(
+            settings_lang=lang
+        ).dump(
+            etc_locale_conf
+        )
 
     def make_rootfs_part(self, extent):
         bootsize = self.settings['esp-size'] / (1024 * 1024) + 1

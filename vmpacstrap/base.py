@@ -47,35 +47,19 @@ def runcmd(argv, stdin='', ignore_fail=False, env=None, **kwargs):
 
 # FIXME: use contextmanager
 def mount_wrapper(rootdir):
-    runcmd(['mount', '/dev', '-t', 'devfs', '-obind',
-            '%s' % os.path.join(rootdir, 'dev')])
-    runcmd(['mount', '/dev/pts', '-t', 'devpts', '-obind',
-            '%s' % os.path.join(rootdir, 'dev', 'pts')])
-    runcmd(['mount', '/proc', '-t', 'proc', '-obind',
-            '%s' % os.path.join(rootdir, 'proc')])
-    runcmd(['mount', '/sys', '-t', 'sysfs', '-obind',
-            '%s' % os.path.join(rootdir, 'sys')])
+    runcmd(['mount', '-t', 'proc', '/proc', '%s' % os.path.join(rootdir, 'proc')])
+    runcmd(['mount', '-o', 'bind', '/dev',  '%s' % os.path.join(rootdir, 'dev')])
+    runcmd(['mount', '-o', 'bind', '/dev/pts', '%s' % os.path.join(rootdir, 'dev', 'pts')])
+    runcmd(['mount', '-o', 'bind', '/sys', '%s' % os.path.join(rootdir, 'sys')])
 
 
 def umount_wrapper(rootdir):
-    runcmd(['umount', os.path.join(rootdir, 'sys')])
-    runcmd(['umount', os.path.join(rootdir, 'proc')])
-    runcmd(['umount', os.path.join(rootdir, 'dev', 'pts')])
-    runcmd(['umount', os.path.join(rootdir, 'dev')])
+    runcmd("umount %s/{dev/pts,dev,proc,sys}" % rootdir, shell=True)
 
 
-def cleanup_apt_cache(rootdir):
-    out = runcmd(['chroot', rootdir, 'apt-get', 'clean'])
+def cleanup_pacman_cache(rootdir):
+    out = runcmd(['chroot', rootdir, 'pacman', '-Scc'])
     logging.debug('stdout:\n%s', out)
-
-
-def set_password(rootdir, user, password):
-    encrypted = crypt.crypt(password, '..')
-    runcmd(['chroot', rootdir, 'usermod', '-p', encrypted, user])
-
-
-def delete_password(rootdir, user):
-    runcmd(['chroot', rootdir, 'passwd', '-d', user])
 
 
 def copy_files(src, dest):
@@ -110,6 +94,35 @@ class Base(object):
                 self.settings['image'],
                 str(self.settings['size'])])
 
+    def is_arm(self):
+        return "arm" in self.settings['arch']
+
+    def arm_chroot(self, rootdir, args, shell=None):
+        out = ""
+        self.copy_qemu_arm_static(rootdir)
+        mount_wrapper(rootdir)
+        if shell:
+            out = runcmd(args, shell=shell)
+        elif not shell:
+            out = runcmd(args, shell=shell)
+        elif shell is None:
+            out = runcmd(args)
+        # Clean up
+        os.remove("%s/usr/bin/qemu-arm-static" % rootdir)
+        umount_wrapper(rootdir)
+        return out
+
+    def copy_qemu_arm_static(self, rootdir):
+        settings_qemu_arm_static_path = self.settings['qemu-arm-static']
+        if settings_qemu_arm_static_path:
+            shutil.copy(settings_qemu_arm_static_path, "%s/usr/bin/qemu-arm-static" % rootdir)
+        elif os.path.exists("/usr/bin/qemu-arm-static"):
+            shutil.copy("/usr/bin/qemu-arm-static", "%s/usr/bin/qemu-arm-static" % rootdir)
+        else:
+            msg = "qemu-arm-static not found" \
+                  " - please install the qemu-arm-static package or specify its path."
+            raise cliapp.AppException(msg)
+
     def create_tarball(self, rootdir):
         # Create a tarball of the disk's contents
         # shell out to runcmd since it more easily handles rootdir
@@ -120,32 +133,76 @@ class Base(object):
         self.message('Creating filesystem %s' % fstype)
         runcmd(['mkfs', '-t', fstype, device])
 
+    def set_password(self, rootdir, user, password):
+        self.message("Setting password for %s" % user)
+        encrypted = crypt.crypt(password, '..')
+        args = ['chroot', rootdir, 'usermod', '-p', encrypted, user]
+        if self.is_arm():
+            self.arm_chroot(rootdir, args)
+        else:
+            runcmd(args)
+
     def set_root_password(self, rootdir):
         if self.settings['root-password']:
             self.message('Setting root password')
-            set_password(rootdir, 'root', self.settings['root-password'])
+            self.set_password(rootdir, 'root', self.settings['root-password'])
         elif self.settings['lock-root-password']:
             self.message('Locking root password')
-            runcmd(['chroot', rootdir, 'passwd', '-l', 'root'])
+            args = ['chroot', rootdir, 'passwd', '-l', 'root']
+            if self.is_arm():
+                self.arm_chroot(rootdir, args)
+            else:
+                runcmd(args)
         else:
             self.message('Give root an empty password')
-            delete_password(rootdir, 'root')
+            self.delete_password(rootdir, 'root')
+
+    def delete_password(self, rootdir, user):
+        args = ['chroot', rootdir, 'passwd', '-d', user]
+        if self.is_arm():
+            self.arm_chroot(rootdir, args)
+        else:
+            runcmd(args)
+
+    def create_user(self, rootdir, vmuser):
+        self.message("Creating user %s" % vmuser)
+        args = "chroot %s useradd --create-home %s" % (rootdir, vmuser)
+        if self.is_arm():
+            self.arm_chroot(rootdir, args, shell=True)
+        else:
+            runcmd(args)
+
+        # TODO: This needs to be changed to work the "Arch" way
+        # if self.settings['sudo']:
+        #     self.message("Adding %s to sudo" % vmuser)
+        #     args = ['chroot', rootdir, 'adduser', vmuser, 'sudo']
+        #     if self.is_arm():
+        #         self.arm_chroot(rootdir, args)
+        #     else:
+        #         runcmd(args)
 
     def create_users(self, rootdir):
-        def create_user(vmuser):
-            runcmd(['chroot', rootdir, 'adduser', '--gecos', vmuser,
-                    '--disabled-password', vmuser])
-            if self.settings['sudo']:
-                runcmd(['chroot', rootdir, 'adduser', vmuser, 'sudo'])
+        # def create_user(vmuser):
+        #     args = ['chroot', rootdir, 'adduser', '--gecos', vmuser, '--disabled-password', vmuser]
+        #     if self.is_arm():
+        #         self.arm_chroot(rootdir, args)
+        #     else:
+        #         runcmd(args)
+        #     if self.settings['sudo']:
+        #         args = ['chroot', rootdir, 'adduser', vmuser, 'sudo']
+        #         if self.is_arm():
+        #             self.arm_chroot(rootdir, args)
+        #         else:
+        #             runcmd(args)
 
         for userpass in self.settings['user']:
             if '/' in userpass:
                 user, password = userpass.split('/', 1)
-                create_user(user)
-                set_password(rootdir, user, password)
+                self.create_user(rootdir, user)
+                self.set_password(rootdir, user, password)
             else:
-                create_user(userpass)
-                delete_password(rootdir, userpass)
+                self.create_user(rootdir, userpass)
+                self.delete_password(rootdir, userpass)
 
     def customize(self, rootdir):
         script = self.settings['customize']

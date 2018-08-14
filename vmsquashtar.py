@@ -60,7 +60,7 @@ class VmSquash(cliapp.Application):
     def message(self, msg):
         logging.info(msg)
         if self.settings['verbose']:
-            print msg
+            print(msg)
 
     def cleanup_system(self):
         # Clean up after any errors.
